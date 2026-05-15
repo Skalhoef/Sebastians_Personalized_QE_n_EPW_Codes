@@ -40,6 +40,7 @@
                             wmax, wmin, mp_mesh_q, mp_mesh_k, filqf, filkf, nswi, nc,  &
                             delta_qsmear, degaussq, band_plot, ephwrite, nstemp,       &
                             broyden_beta, conv_thr_raxis, temps, tempsmin, tempsmax,   &
+                            n_wan_min, n_wan_max,                                       &
                             !!!!!
                             ! broyden_ndim, wscut, wsfc, nqstep, limag, lreal, muc,      &
                             ! gap_edge, conv_thr_iaxis, nqsmear, iprint, wepexst, nswfc, &
@@ -67,6 +68,10 @@
                             wannier_plot_supercell, wannier_plot_scale, reduce_unk,    &
                             wannier_plot_radius, fermi_plot, fixsym, epw_no_t_rev,     &
                             epw_tr, epw_nosym, epw_noinv, epw_crysym,                  &
+                            ! SK Begin
+                            prtgkk_sebbe, print_fine_Fermi, sebbe_interacting,         &
+                            print_phonons, print_electrons,                            &
+                            ! SK End
                             !!!!!
                             ! bfieldx, bfieldy, bfieldz, tc_linear, tc_linear_solver,  &
                             bfieldx, bfieldy, bfieldz,                                 &
@@ -221,7 +226,10 @@
        adapt_ethrdg_plrn, init_ethrdg_plrn, nethrdg_plrn,                      &
   !---------------------------------------------------------------------------------
   ! SH: Added for tc linearized equation, sparce sampling, and full-bandwidth runs
-       tc_linear, tc_linear_solver, gridsamp, griddens, fbw, dos_del, muchem
+       tc_linear, tc_linear_solver, gridsamp, griddens, fbw, dos_del, muchem,  &
+  ! SK: Added for selecting bands for printing
+       n_wan_min, n_wan_max, prtgkk_sebbe, print_fine_Fermi, sebbe_interacting, &
+       print_phonons, print_electrons
        !!!!!
   ! --------------------------------------------------------------------------------
   !
@@ -633,6 +641,13 @@
   longrange    = .FALSE.
   shortrange   = .FALSE.
   prtgkk       = .FALSE.
+  ! SK Begin
+  prtgkk_sebbe = .FALSE.
+  print_fine_Fermi = .FALSE.
+  sebbe_interacting = .TRUE.
+  print_phonons = .true.
+  print_electrons = .true.
+  ! SK End
   nel          = 0.0d0
   meff         = 1.d0
   epsiheg      = 1.d0

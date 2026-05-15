@@ -35,6 +35,10 @@
                             efermi_read, fermi_energy, specfun_el, band_plot,   &
                             scattering, nstemp, int_mob, scissor, carrier,      &
                             iterative_bte, longrange, scatread, nqf1, prtgkk,   &
+                            ! SK Begin
+                            prtgkk_sebbe, print_fine_Fermi, sebbe_interacting,  &
+                            print_phonons, print_electrons,                     &
+                            ! SK End
                             nqf2, nqf3, mp_mesh_k, restart, plselfen, epbread,  &
                             epmatkqread, selecqread, restart_step, nsmear,      &
                             nkc1, nkc2, nkc3, nqc1, nqc2, nqc3, assume_metal,   &
@@ -77,7 +81,8 @@
                             !!!!!
   USE transport,     ONLY : transport_coeffs, scattering_rate_q
   USE grid,          ONLY : qwindow
-  USE printing,      ONLY : print_gkk, plot_band, plot_fermisurface
+  USE printing,      ONLY : print_gkk, plot_band, plot_fermisurface,             &
+                            print_gkk_sebbe, print_fine_Fermi_constants
   USE io_epw,        ONLY : rwepmatw, epw_read, epw_write
   USE io_transport,  ONLY : tau_read, iter_open, print_ibte, iter_merge
   USE io_selfen,     ONLY : selfen_el_read, spectral_read
@@ -1250,8 +1255,9 @@
             ! interpolate only when (k,k+q) both have at least one band
             ! within a Fermi shell of size fsthick
             !
-            IF ((MINVAL(ABS(etf(:, ikk) - ef)) < fsthick) .AND. &
-                (MINVAL(ABS(etf(:, ikq) - ef)) < fsthick)) THEN
+            ! IF ((MINVAL(ABS(etf(:, ikk) - ef)) < fsthick) .AND. &
+            !     (MINVAL(ABS(etf(:, ikq) - ef)) < fsthick)) THEN
+            IF (MINVAL(ABS(etf(:, ikk) - ef)) < fsthick .and. sebbe_interacting) THEN
               !
               ! Compute velocities
               !
@@ -1342,6 +1348,13 @@
       !
       !
       IF (prtgkk    ) CALL print_gkk(iq)
+      !
+      ! SK Begin
+      IF (prtgkk_sebbe) CALL print_gkk_sebbe(iq)
+      IF (print_fine_Fermi) CALL print_fine_Fermi_constants(iq)
+      ! SK END
+      ! 
+      !
       IF (phonselfen) CALL selfen_phon_q(iqq, iq, totq)
       IF (elecselfen) CALL selfen_elec_q(iqq, iq, totq, first_cycle)
       IF (plselfen .AND. vme == 'dipole') CALL selfen_pl_q(iqq, iq, totq, first_cycle)

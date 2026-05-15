@@ -283,6 +283,18 @@
   REAL(KIND = DP) :: delta_smear
   !! change in energy for each additional smearing in the selfen_phon
   !
+  ! SK Begin
+  ! 
+  INTEGER :: n_wan_min ! Index of the minimal band for wannierization around the Fermi-level
+  INTEGER :: n_wan_max ! Index of the maximal band for wannierization around the Fermi-level
+  logical :: prtgkk_sebbe ! If true, print the |g| vertex, epsilons, omegas and k-vectors.
+  logical :: print_fine_Fermi ! If true, we print the dispersion on the fine k-grid around the Fermi-level
+  logical :: sebbe_interacting ! If true, compute couplings as well. If not, only compute non-interacting energies.
+  logical :: print_phonons ! If true, print phonon frequencies on the fine q-grid
+  logical :: print_electrons ! If true, print electron energies on the fine k-grid
+  ! 
+  ! SK End
+  !
   ! Wannierization
   CHARACTER(LEN = 255) :: wannier_plot_list
   !! Field read for parsing Wannier function list

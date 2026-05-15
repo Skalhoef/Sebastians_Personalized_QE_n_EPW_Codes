@@ -253,6 +253,576 @@
     !-----------------------------------------------------------------------
     !
     !-----------------------------------------------------------------------
+    SUBROUTINE print_gkk_sebbe(iq)
+    !-----------------------------------------------------------------------
+    !!
+    !! Print the |g| vertex for all n,n' and modes in meV and do average
+    !! on degenerate states.
+    !!
+    !-----------------------------------------------------------------------
+    USE kinds,         ONLY : DP
+    USE io_global,     ONLY : stdout
+    USE modes,         ONLY : nmodes
+    USE epwcom,        ONLY : nbndsub, n_wan_min, n_wan_max, sebbe_interacting, &
+                              print_electrons, print_phonons
+    USE elph2,         ONLY : etf, ibndmin, nkqf, xqf, nbndfst,    &
+                              nkf, epf17, xkf, nkqtotf, wf, nktotf
+    USE constants_epw, ONLY : ryd2mev, ryd2ev, two, zero
+    USE mp,            ONLY : mp_barrier, mp_sum
+    USE mp_global,     ONLY : inter_pool_comm
+    USE mp_world,      ONLY : mpime
+    USE io_global,     ONLY : ionode_id
+    USE division,      ONLY : fkbounds
+    USE poolgathering, ONLY : poolgather2
+    !
+    IMPLICIT NONE
+    !
+    INTEGER, INTENT(in) :: iq
+    !! Current q-point index
+    !
+    ! Local variables
+    INTEGER :: lower_bnd
+    !! Lower bounds index after k or q paral
+    INTEGER :: upper_bnd
+    !! Upper bounds index after k or q paral
+    INTEGER :: ik
+    !! K-point index
+    INTEGER :: ikk
+    !! K-point index
+    INTEGER :: ikq
+    !! K+q-point index
+    INTEGER :: ibnd
+    !! Band index
+    INTEGER :: jbnd
+    !! Band index
+    INTEGER :: pbnd
+    !! Band index
+    INTEGER :: nu
+    !! Mode index
+    INTEGER :: mu
+    !! Mode index
+    INTEGER :: n
+    !! Number of modes
+    INTEGER :: ierr
+    !! Error status
+    REAL(KIND = DP) :: xkf_all(3, nkqtotf)
+    !! Collect k-point coordinate from all pools in parallel case
+    REAL(KIND = DP) :: etf_all(nbndsub, nkqtotf)
+    !! Collect eigenenergies from all pools in parallel case
+    REAL(KIND = DP) :: wq
+    !! Phonon frequency
+    REAL(KIND = DP) :: w_1
+    !! Temporary phonon freq. 1
+    REAL(KIND = DP) :: w_2
+    !! Temporary phonon freq. 2
+    REAL(KIND = DP) :: gamma
+    !! Temporary electron-phonon matrix element
+    REAL(KIND = DP) :: ekk
+    !! Eigenenergies at k
+    REAL(KIND = DP) :: ekq
+    !! Eigenenergies at k+q
+    REAL(KIND = DP) :: g2
+    !! Temporary electron-phonon matrix element square
+    REAL(KIND = DP), ALLOCATABLE :: epc(:, :, :, :)
+    !! g vectex accross all pools
+    REAL(KIND = DP), ALLOCATABLE :: epc_sym(:, :, :)
+    !! Temporary g-vertex for each pool
+    
+    ! Lucas and Sebastian Tests
+    CHARACTER(len=30) :: omegas
+    CHARACTER(len=30) :: epsilons
+    CHARACTER(len=30) :: couplings
+    CHARACTER(len=30) :: wavevectors
+    CHARACTER(len=30) :: wavevectors_epsilons
+    
+    ! Lucas and Sebastian Tests
+    if (sebbe_interacting) then 
+      omegas = 'uniform_omega_data.txt'
+      epsilons = 'uniform_epsilon_data.txt'
+      couplings = 'uniform_g_data.txt'
+      wavevectors = 'uniform_k_data.txt'
+      wavevectors_epsilons = 'uniform_k_epsilon_data.txt'
+    else
+      omegas = 'omega_data.txt'
+      epsilons = 'epsilon_data.txt'
+      couplings = 'g_data.txt'
+      wavevectors = 'k_data.txt'
+      wavevectors_epsilons = 'k_epsilon_data.txt'
+    end if
+    
+    !
+    ! find the bounds of k-dependent arrays in the parallel case in each pool
+    CALL fkbounds(nktotf, lower_bnd, upper_bnd)
+    !
+    ALLOCATE(epc(nbndfst, nbndfst, nmodes, nktotf), STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error allocating epc', 1)
+    ALLOCATE(epc_sym(nbndfst, nbndfst, nmodes), STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error allocating epc_sym', 1)
+    !
+    epc(:, :, :, :)  = zero
+    epc_sym(:, :, :) = zero
+    !
+    ! First do the average over bands and modes for each pool
+    DO ik = 1, nkf
+      ikk = 2 * ik - 1
+      ikq = ikk + 1
+      !
+      DO nu = 1, nmodes
+        wq = wf(nu, iq)
+        DO ibnd = 1, nbndfst
+          DO jbnd = 1, nbndfst
+            gamma = (ABS(epf17(jbnd, ibnd, nu, ik)))**two
+            IF (wq > 0.d0) THEN
+              gamma = gamma / (two * wq)
+            ELSE
+              gamma = 0.d0
+            ENDIF
+            gamma = DSQRT(gamma)
+            ! gamma = g [Ry]
+            epc(ibnd, jbnd, nu, ik + lower_bnd - 1) = gamma
+          ENDDO ! jbnd
+        ENDDO   ! ibnd
+      ENDDO ! loop on modes
+      !
+      ! Here we "SYMMETRIZE": actually we simply take the averages over
+      ! degenerate states, it is only a convention because g is gauge-dependent!
+      !
+      ! first the phonons
+      DO ibnd = 1, nbndfst
+        DO jbnd = 1, nbndfst
+          DO nu = 1, nmodes
+            w_1 = wf(nu, iq)
+            g2 = 0.d0
+            n  = 0
+            DO mu = 1, nmodes
+              w_2 = wf(mu, iq)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) THEN
+                n = n + 1
+                g2 = g2 + epc(ibnd, jbnd, mu, ik + lower_bnd - 1) * epc(ibnd, jbnd, mu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      ! Then the k electrons
+      DO nu = 1, nmodes
+        DO jbnd = 1, nbndfst
+          DO ibnd = 1, nbndfst
+            w_1 = etf(ibndmin - 1 + ibnd, ikk)
+            g2 = 0.d0
+            n  = 0
+            DO pbnd = 1, nbndfst
+              w_2 = etf(ibndmin - 1 + pbnd, ikk)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) THEN
+                n = n + 1
+                g2 = g2 + epc(pbnd, jbnd, nu, ik + lower_bnd - 1) * epc(pbnd, jbnd, nu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      !
+      ! and finally the k+q electrons
+      DO nu = 1, nmodes
+        DO ibnd = 1, nbndfst
+          DO jbnd = 1, nbndfst
+            w_1 = etf(ibndmin - 1 + jbnd, ikq)
+            g2 = 0.d0
+            n  = 0
+            DO pbnd = 1, nbndfst
+              w_2 = etf(ibndmin - 1 + pbnd, ikq)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) then
+                n = n + 1
+                g2 = g2 + epc(ibnd, pbnd, nu, ik + lower_bnd - 1) * epc(ibnd, pbnd, nu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      !
+    ENDDO ! k-points
+    !
+    ! We need quantity from all the pools
+    xkf_all(:, :) = zero
+    etf_all(:, :) = zero
+    !
+#if defined(__MPI)
+    !
+    ! Note that poolgather2 works with the doubled grid (k and k+q)
+    !
+    CALL poolgather2(3,       nkqtotf, nkqf, xkf, xkf_all)
+    CALL poolgather2(nbndsub, nkqtotf, nkqf, etf, etf_all)
+    CALL mp_sum(epc, inter_pool_comm )
+    CALL mp_barrier(inter_pool_comm)
+    !
+#else
+    !
+    xkf_all = xkf
+    etf_all = etf
+    !
+#endif
+    !
+    ! Only master writes
+    IF (mpime == ionode_id) THEN
+  
+      ! Write first the couplings.
+      if (sebbe_interacting) then 
+        open(unit=500, file=couplings, status='UNKNOWN', action='write', position='APPEND')
+          DO ik = 1, nktotf
+            ! Additions:
+            ikk = 2 * ik - 1
+            ikq = ikk + 1
+            ! If ANY of the bands are within fsthick to the fermi-surface, we print everything.
+            DO ibnd = n_wan_min, n_wan_max
+              DO jbnd = n_wan_min, n_wan_max
+                DO nu = 1, nmodes
+                  WRITE(500, '(F15.3)') ryd2mev * epc(ibnd, jbnd, nu, ik)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDDO
+        close(unit=500)
+      end if
+
+      
+      IF (iq == 1 .and. print_electrons) THEN 
+        open(unit=501, file=epsilons, status='UNKNOWN', action='write', position='APPEND')
+          ! Additions from Moa:
+          ! i <3 u
+          DO ik = 1, nktotf 
+            ikk = 2 * ik - 1
+            DO ibnd = n_wan_min, n_wan_max
+              ekk = etf_all(ibnd, ikk)
+              WRITE(501, '(F0.6)') ryd2ev * ekk
+            ENDDO 
+          ENDDO 
+        close(unit=501)
+      END IF 
+
+      IF (iq == 1 .and. print_electrons .and. .not. sebbe_interacting) THEN 
+        open(unit=503, file=wavevectors_epsilons, status='UNKNOWN', action='write', position='APPEND')
+          ! Additions from Moa:
+          ! i <3 u
+          DO ik = 1, nktotf 
+            ikk = 2 * ik - 1
+            WRITE(503, '(3f12.7)') xkf_all(:, ikk)
+          ENDDO 
+        close(unit=503)
+      END IF 
+      
+      IF (print_phonons) THEN 
+        open(unit=502, file=omegas, status='UNKNOWN', action='write', position='APPEND')
+          DO nu = 1, nmodes
+            WRITE(502, '(F0.3)') ryd2mev * wf(nu, iq)
+          ENDDO  
+        close(unit=502)
+      ENDIF
+      
+      IF (print_electrons .and. print_phonons) THEN 
+        open(unit=503, file=wavevectors, status='UNKNOWN', action='write', position='APPEND')
+          WRITE(503, '(3f12.7)') xqf(:, iq)
+        close(unit=503)
+      END IF 
+	  	  
+    END IF ! master node
+    !
+    DEALLOCATE(epc, STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error deallocating epc', 1)
+    DEALLOCATE(epc_sym, STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error deallocating epc_sym', 1)
+    !
+    RETURN
+    !
+    !-----------------------------------------------------------------------
+    END SUBROUTINE print_gkk_sebbe
+    !-----------------------------------------------------------------------
+    SUBROUTINE print_fine_Fermi_constants(iq)
+    !-----------------------------------------------------------------------
+    !!
+    !! Print the |g| vertex for all n,n' and modes in meV and do average
+    !! on degenerate states.
+    !!
+    !-----------------------------------------------------------------------
+    USE kinds,         ONLY : DP
+    USE io_global,     ONLY : stdout
+    USE modes,         ONLY : nmodes
+    USE epwcom,        ONLY : nbndsub, n_wan_min, n_wan_max, fsthick, &
+                              fermi_energy
+    USE elph2,         ONLY : etf, ibndmin, nkqf, xqf, nbndfst,    &
+                              nkf, epf17, xkf, nkqtotf, wf, nktotf
+    USE constants_epw, ONLY : ryd2mev, ryd2ev, two, zero
+    USE mp,            ONLY : mp_barrier, mp_sum
+    USE mp_global,     ONLY : inter_pool_comm
+    USE mp_world,      ONLY : mpime
+    USE io_global,     ONLY : ionode_id
+    USE division,      ONLY : fkbounds
+    USE poolgathering, ONLY : poolgather2
+    !
+    IMPLICIT NONE
+    !
+    INTEGER, INTENT(in) :: iq
+    !! Current q-point index
+    !
+    ! Local variables
+    INTEGER :: lower_bnd
+    !! Lower bounds index after k or q paral
+    INTEGER :: upper_bnd
+    !! Upper bounds index after k or q paral
+    INTEGER :: ik
+    !! K-point index
+    INTEGER :: ikk
+    !! K-point index
+    INTEGER :: ikq
+    !! K+q-point index
+    INTEGER :: ibnd
+    !! Band index
+    INTEGER :: jbnd
+    !! Band index
+    INTEGER :: pbnd
+    !! Band index
+    INTEGER :: nu
+    !! Mode index
+    INTEGER :: mu
+    !! Mode index
+    INTEGER :: n
+    !! Number of modes
+    INTEGER :: ierr
+    !! Error status
+    REAL(KIND = DP) :: xkf_all(3, nkqtotf)
+    !! Collect k-point coordinate from all pools in parallel case
+    REAL(KIND = DP) :: etf_all(nbndsub, nkqtotf)
+    !! Collect eigenenergies from all pools in parallel case
+    REAL(KIND = DP) :: wq
+    !! Phonon frequency
+    REAL(KIND = DP) :: w_1
+    !! Temporary phonon freq. 1
+    REAL(KIND = DP) :: w_2
+    !! Temporary phonon freq. 2
+    REAL(KIND = DP) :: gamma
+    !! Temporary electron-phonon matrix element
+    REAL(KIND = DP) :: ekk
+    !! Eigenenergies at k
+    REAL(KIND = DP) :: ekq
+    !! Eigenenergies at k+q
+    REAL(KIND = DP) :: g2
+    !! Temporary electron-phonon matrix element square
+    REAL(KIND = DP), ALLOCATABLE :: epc(:, :, :, :)
+    !! g vectex accross all pools
+    REAL(KIND = DP), ALLOCATABLE :: epc_sym(:, :, :)
+    !! Temporary g-vertex for each pool
+    
+    ! Lucas and Sebastian Tests
+    CHARACTER(len=30) :: omegas
+    CHARACTER(len=30) :: epsilons
+    CHARACTER(len=30) :: epsilons_kplusq
+    CHARACTER(len=30) :: couplings
+    
+    ! Lucas and Sebastian Tests
+    omegas = 'SE_omega_data.txt'
+    epsilons = 'SE_epsilon_data.txt'
+    epsilons_kplusq = 'SE_epsilon_kplusq_data.txt'
+    couplings = 'SE_g_data.txt'    
+    !
+    ! find the bounds of k-dependent arrays in the parallel case in each pool
+    CALL fkbounds(nktotf, lower_bnd, upper_bnd)
+    !
+    ALLOCATE(epc(nbndfst, nbndfst, nmodes, nktotf), STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error allocating epc', 1)
+    ALLOCATE(epc_sym(nbndfst, nbndfst, nmodes), STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error allocating epc_sym', 1)
+    !
+    epc(:, :, :, :)  = zero
+    epc_sym(:, :, :) = zero
+    !
+    ! First do the average over bands and modes for each pool
+    DO ik = 1, nkf
+      ikk = 2 * ik - 1
+      ikq = ikk + 1
+      !
+      DO nu = 1, nmodes
+        wq = wf(nu, iq)
+        DO ibnd = 1, nbndfst
+          DO jbnd = 1, nbndfst
+            gamma = (ABS(epf17(jbnd, ibnd, nu, ik)))**two
+            IF (wq > 0.d0) THEN
+              gamma = gamma / (two * wq)
+            ELSE
+              gamma = 0.d0
+            ENDIF
+            gamma = DSQRT(gamma)
+            ! gamma = g [Ry]
+            epc(ibnd, jbnd, nu, ik + lower_bnd - 1) = gamma
+          ENDDO ! jbnd
+        ENDDO   ! ibnd
+      ENDDO ! loop on modes
+      !
+      ! Here we "SYMMETRIZE": actually we simply take the averages over
+      ! degenerate states, it is only a convention because g is gauge-dependent!
+      !
+      ! first the phonons
+      DO ibnd = 1, nbndfst
+        DO jbnd = 1, nbndfst
+          DO nu = 1, nmodes
+            w_1 = wf(nu, iq)
+            g2 = 0.d0
+            n  = 0
+            DO mu = 1, nmodes
+              w_2 = wf(mu, iq)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) THEN
+                n = n + 1
+                g2 = g2 + epc(ibnd, jbnd, mu, ik + lower_bnd - 1) * epc(ibnd, jbnd, mu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      ! Then the k electrons
+      DO nu = 1, nmodes
+        DO jbnd = 1, nbndfst
+          DO ibnd = 1, nbndfst
+            w_1 = etf(ibndmin - 1 + ibnd, ikk)
+            g2 = 0.d0
+            n  = 0
+            DO pbnd = 1, nbndfst
+              w_2 = etf(ibndmin - 1 + pbnd, ikk)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) THEN
+                n = n + 1
+                g2 = g2 + epc(pbnd, jbnd, nu, ik + lower_bnd - 1) * epc(pbnd, jbnd, nu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      !
+      ! and finally the k+q electrons
+      DO nu = 1, nmodes
+        DO ibnd = 1, nbndfst
+          DO jbnd = 1, nbndfst
+            w_1 = etf(ibndmin - 1 + jbnd, ikq)
+            g2 = 0.d0
+            n  = 0
+            DO pbnd = 1, nbndfst
+              w_2 = etf(ibndmin - 1 + pbnd, ikq)
+              IF (ABS(w_2 - w_1) < 0.01/ryd2mev) then
+                n = n + 1
+                g2 = g2 + epc(ibnd, pbnd, nu, ik + lower_bnd - 1) * epc(ibnd, pbnd, nu, ik + lower_bnd - 1)
+              ENDIF
+            ENDDO
+            g2 = g2 / FLOAT(n)
+            epc_sym(ibnd, jbnd, nu) = DSQRT(g2)
+          ENDDO
+        ENDDO
+      ENDDO
+      epc(:, :, :, ik + lower_bnd - 1) = epc_sym
+      !
+    ENDDO ! k-points
+    !
+    ! We need quantity from all the pools
+    xkf_all(:, :) = zero
+    etf_all(:, :) = zero
+    !
+#if defined(__MPI)
+    !
+    ! Note that poolgather2 works with the doubled grid (k and k+q)
+    !
+    CALL poolgather2(3,       nkqtotf, nkqf, xkf, xkf_all)
+    CALL poolgather2(nbndsub, nkqtotf, nkqf, etf, etf_all)
+    CALL mp_sum(epc, inter_pool_comm )
+    CALL mp_barrier(inter_pool_comm)
+    !
+#else
+    !
+    xkf_all = xkf
+    etf_all = etf
+    !
+#endif
+    !
+    ! Only master writes
+    IF (mpime == ionode_id) THEN
+    
+      open(unit=500, file=couplings, status='UNKNOWN', action='write', position='APPEND')
+        DO ik = 1, nktotf
+          ! Additions:
+          ikk = 2 * ik - 1
+          ikq = ikk + 1
+          ! If ANY of the bands are within fsthick to the fermi-surface, we print everything.
+          IF (MINVAL(ABS(etf_all(:, ikk) - fermi_energy)) < fsthick) THEN
+            DO ibnd = n_wan_min, n_wan_max
+              DO jbnd = n_wan_min, n_wan_max
+                DO nu = 1, nmodes
+                  WRITE(500, '(F15.3)') ryd2mev * epc(ibnd, jbnd, nu, ik)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF 
+        ENDDO
+      close(unit=500)
+
+      IF (iq == 1) THEN 
+        open(unit=501, file=epsilons, status='UNKNOWN', action='write', position='APPEND')
+          ! Additions from Moa:
+          ! i <3 u
+          DO ik = 1, nktotf 
+            ikk = 2 * ik - 1
+            ! If ANY of the bands are within fsthick to the fermi-surface, we print everything.
+            IF (MINVAL(ABS(etf_all(:, ikk) - fermi_energy)) < fsthick) THEN 
+              DO ibnd = n_wan_min, n_wan_max
+                ekk = etf_all(ibnd, ikk)
+                WRITE(501, '(F0.6)') ryd2ev * ekk
+              ENDDO
+            ENDIF 
+          ENDDO 
+        close(unit=501)
+      ENDIF 
+
+      open(unit=502, file=omegas, status='UNKNOWN', action='write', position='APPEND')
+        DO nu = 1, nmodes
+          WRITE(502, '(F0.3)') ryd2mev * wf(nu, iq)
+        ENDDO  
+      close(unit=502)
+
+      open(unit=504, file=epsilons_kplusq, status='UNKNOWN', action='write', position='APPEND')
+        DO ik = 1, nktotf
+          ikk = 2 * ik - 1
+          ikq = ikk + 1
+          IF (MINVAL(ABS(etf_all(:, ikk) - fermi_energy)) < fsthick) THEN  
+            DO ibnd = n_wan_min, n_wan_max
+              ekq = etf_all(ibnd, ikq)
+              WRITE(504, '(F0.6)') ryd2ev * ekq
+            ENDDO
+          ENDIF
+        ENDDO
+      close(unit=504)
+	  
+    ENDIF ! master node
+    !
+    DEALLOCATE(epc, STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error deallocating epc', 1)
+    DEALLOCATE(epc_sym, STAT = ierr)
+    IF (ierr /= 0) CALL errore('print_gkk', 'Error deallocating epc_sym', 1)
+    !
+    RETURN
+    !
+    !-----------------------------------------------------------------------
+    END SUBROUTINE print_fine_Fermi_constants
+    !-----------------------------------------------------------------------
+    !
+    !-----------------------------------------------------------------------
     SUBROUTINE print_mob_sym(f_out, bztoibz_mat, vkk_all, etf_all, wkf_all, &
                              ef0, sigma, max_mob, xkf_all)
     !-----------------------------------------------------------------------

@@ -218,13 +218,16 @@ PROGRAM do_dos
         ENDIF
         IF (nspin==1.or.nspin==4) THEN
            IF ( .not. ltetra ) DOSint(1)  = DOSint(1) + DOSofE (1) * DeltaE
-           WRITE (4, '(f8.3,2e12.4)') E * rytoev, DOSofE(1)/rytoev, DOSint(1) 
+           ! WRITE (4, '(f8.3,2e12.4)') E * rytoev, DOSofE(1)/rytoev, DOSint(1) 
+           WRITE (4, '(f12.6,2e12.4)') E * rytoev, DOSofE(1)/rytoev, DOSint(1)
         ELSE
            IF ( .not. ltetra )  THEN 
                DOSint(1) = DOSint(1) + (DOSofE (1) + DOSofE (2) ) * DeltaE
-               WRITE (4, '(f8.3,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)
+               ! WRITE (4, '(f8.3,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)
+               WRITE (4, '(f12.6,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)
            ELSE
-               WRITE (4, '(f8.3,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)+DOSint(2) 
+               ! WRITE (4, '(f8.3,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)+DOSint(2) 
+               WRITE (4, '(f12.6,3e12.4)') E * rytoev, DOSofE/rytoev, DOSint(1)+DOSint(2)
            END IF
         ENDIF
      ENDDO

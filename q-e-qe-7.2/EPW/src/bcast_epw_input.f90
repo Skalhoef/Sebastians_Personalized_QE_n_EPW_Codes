@@ -63,6 +63,10 @@
                             wannier_plot_supercell, wannier_plot_radius,      &
                             fixsym, epw_no_t_rev, epw_tr, epw_nosym, epw_noinv, &
                             epw_crysym, bfieldx, bfieldy, bfieldz, tc_linear, &
+                            ! SK Begin
+                            prtgkk_sebbe, print_fine_Fermi, sebbe_interacting, &
+                            print_phonons, print_electrons,                    &
+                            ! SK End
                             !!!!!
                             !tc_linear_solver, mob_maxfreq, mob_nfreq
                             ii_g, ii_charge, ii_n, ii_scattering, ii_only,    &
@@ -174,6 +178,12 @@
   CALL mp_bcast(carrier         , meta_ionode_id, world_comm)
   CALL mp_bcast(restart         , meta_ionode_id, world_comm)
   CALL mp_bcast(prtgkk          , meta_ionode_id, world_comm)
+  ! SK Begin
+  CALL mp_bcast(prtgkk_sebbe    , meta_ionode_id, world_comm)
+  CALL mp_bcast(print_fine_Fermi, meta_ionode_id, world_comm)
+  CALL mp_bcast(print_phonons, meta_ionode_id, world_comm)
+  CALL mp_bcast(print_electrons, meta_ionode_id, world_comm)
+  ! SK End
   CALL mp_bcast(lphase          , meta_ionode_id, world_comm)
   CALL mp_bcast(lindabs         , meta_ionode_id, world_comm)
   CALL mp_bcast(use_ws          , meta_ionode_id, world_comm)
