@@ -1,5 +1,5 @@
 # Sebastians_Personalized_QE_n_EPW_Codes
-This repository contains minimal modifications to Quantum ESPRESSO to support the GRIT code.
+This repository contains modifications to Quantum ESPRESSO to support the GRIT code.
 
 Changes include:
 
