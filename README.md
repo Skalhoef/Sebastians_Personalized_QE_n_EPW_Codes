@@ -1,2 +1,1 @@
-# Sebastians_Personalized_QE_n_EPW_Codes
-Modified version of the Quantum Espresso and Electron-Phonon-Wannier Codes for research purposes.
+Original Version of q-e-7.2 as main branch. See the other branch for my modifications.
